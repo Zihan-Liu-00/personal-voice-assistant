@@ -11,15 +11,19 @@ from .tts import TTS
 from .router import Router
 from .google_tool import google_search
 from .memory import MemoryService
+from .conversation import ConversationManager
 
 class VoiceAssistant:
     def __init__(self):
         self.recorder=Recorder(CONFIG.sample_rate,CONFIG.max_record_seconds)
         self.asr=ASR(CONFIG.asr_model,CONFIG.language)
         self.llm=LLM(CONFIG.llm_model,CONFIG.llm_max_tokens)
+        print('[LLM] 正在加载本地 Qwen...',flush=True); self.llm.load(); print('[LLM] 本地 Qwen 已加载',flush=True)
         self.router=Router(self.llm)
         self.memory=MemoryService()
-        self.tts=TTS(); self.busy=False
+        self.tts=TTS(CONFIG.tts_model,CONFIG.tts_device,CONFIG.tts_timesteps,CONFIG.tts_reference)
+        print('[TTS] 正在加载 VoxCPM 2.0...',flush=True); self.tts.load(); print('[TTS] VoxCPM 2.0 已加载',flush=True)
+        self.conversation=ConversationManager(self.llm,self.memory.history); self.busy=False
 
     def toggle(self):
         if self.busy: return
@@ -39,11 +43,13 @@ class VoiceAssistant:
                 print('[你] '+text,flush=True)
                 route=self.router.route(text); print('[路由] '+str(route),flush=True)
                 memory_context=self.memory.context(text)
+                history=self.conversation.prepare(text,memory_context)
                 if route.get('need_web_search'):
                     query=route.get('query') or text; print('[联网搜索] '+query,flush=True)
-                    results=google_search(query); answer=self.llm.chat(text,context=memory_context+'\n'+results)
+                    results=google_search(query); answer=self.llm.chat(text,context=memory_context+'\n'+results,history=history)
                 else:
-                    answer=self.llm.chat(text,context=memory_context)
+                    answer=self.llm.chat(text,context=memory_context,history=history)
+                self.conversation.append(text,answer)
                 saved=self.memory.capture_explicit(text)
                 if saved: print('[记忆已保存] '+str(saved),flush=True)
                 print('[助手] '+answer,flush=True); self.tts.speak(answer)
